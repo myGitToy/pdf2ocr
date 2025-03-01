@@ -9,4 +9,4 @@ __pycache__/
 .vscode/
 
 # 忽略其他可能需要忽略的文件或文件夹
-...
+upload/
