@@ -1,0 +1,2 @@
+import gradio
+gradio.__version__
