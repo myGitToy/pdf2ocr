@@ -1,5 +1,6 @@
 """
 批处理PDF文件，避开Gradio的超时限制
+单个pdf文档处理
 """
 import os
 import sys
