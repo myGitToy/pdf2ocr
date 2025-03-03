@@ -9,15 +9,45 @@
    ```bash
    pip install -r requirements.txt
    ```
+
 2. 安装 Tesseract OCR：
    - Ubuntu: `sudo apt-get install tesseract-ocr tesseract-ocr-chi-sim`
    - Windows: 下载 Tesseract 并配置路径（在 OCR.py 中指定路径）
+
+   **故障排除**：
+   - 如遇权限问题：
+     ```bash
+     # 解决权限错误："[Errno 13] Permission denied: '/usr/share/tesseract-ocr'"
+     sudo chmod -R a+r /usr/share/tesseract-ocr
+     ```
+   - 确认 Tesseract 安装位置：
+     ```bash
+     which tesseract
+     tesseract --version
+     ```
+   - 如果无法访问系统 tessdata 目录，程序会自动尝试：
+     1. 在用户家目录下创建 `.tessdata` 文件夹
+     2. 下载所需的中文语言数据
+     3. 使用该目录进行OCR处理
+     
+   - 如果上述方法仍然不起作用，可以手动操作：
+     ```bash
+     # 创建用户级别的tessdata目录
+     mkdir -p ~/.tessdata
+     
+     # 复制中文语言数据
+     sudo cp /usr/share/tesseract-ocr/4.00/tessdata/chi_sim.traineddata ~/.tessdata/
+     
+     # 设置环境变量
+     export TESSDATA_PREFIX=~/.tessdata
+     ```
+
 3. 配置环境变量：
    - 在项目根目录下创建 `.env` 文件，填写：
      ```
      DEEPSEEK_API_KEY=你的API密钥
      ```
-    - 或 复制.env.sample并重命名   
+   - 或 复制.env.sample并重命名   
 
 ## 使用方法
 

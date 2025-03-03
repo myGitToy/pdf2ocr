@@ -44,42 +44,34 @@ class pdf2ocr():
         load_dotenv()
         self.api_key = os.getenv("DEEPSEEK_API_KEY")
 
-        # 创建临时目录
-        #self.temp_dir = tempfile.mkdtemp()
-        #pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract'
-        #os.environ['TESSDATA_PREFIX'] = self.temp_dir
-
-        # 不检查和安装中文训练数据
+        # 明确设置 tesseract 命令路径
+        pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract'
+        
+        # 使用用户家目录创建 tessdata 目录
+        home_dir = os.path.expanduser("~")
+        self.tessdata_dir = os.path.join(home_dir, '.tessdata')
+        os.makedirs(self.tessdata_dir, exist_ok=True)
+        os.environ['TESSDATA_PREFIX'] = self.tessdata_dir
+        
         self.check_and_install_tessdata()
         
     def check_and_install_tessdata(self):
         """
-        检查并安装Tesseract中文训练数据
+        检查并安装Tesseract中文训练数据到用户目录
         """
         print("检查Tesseract中文语言包...")
-        # 确定tessdata目录
-        tessdata_dir = os.getenv('TESSDATA_PREFIX', '/usr/share/tesseract-ocr/4.00/tessdata')
         
-        if not os.path.exists(tessdata_dir):
-            os.makedirs(tessdata_dir, exist_ok=True)
-            print(f"创建tessdata目录: {tessdata_dir}")
-            
-        # 检查中文训练数据是否存在
-        chi_sim_path = os.path.join(tessdata_dir, 'chi_sim.traineddata')
+        # 使用用户家目录下的 tessdata
+        chi_sim_path = os.path.join(self.tessdata_dir, 'chi_sim.traineddata')
+        
         if not os.path.exists(chi_sim_path):
-            print("中文训练数据文件不存在，尝试安装...")
+            print("中文训练数据文件不存在，尝试下载...")
             try:
-                # 方法1: 使用apt安装
-                print("尝试使用apt安装tesseract-ocr-chi-sim...")
-                subprocess.run(['apt-get', 'update'], check=True)
-                subprocess.run(['apt-get', 'install', '-y', 'tesseract-ocr-chi-sim'], check=True)
-                print("tesseract-ocr-chi-sim安装成功")
-            except subprocess.SubprocessError:
-                # 方法2: 直接下载训练数据
-                print("apt安装失败，尝试直接下载训练数据...")
+                # 直接下载训练数据到用户目录
                 import requests
                 url = "https://github.com/tesseract-ocr/tessdata_best/raw/main/chi_sim.traineddata"
                 try:
+                    print(f"正在下载中文语言数据到 {chi_sim_path}...")
                     response = requests.get(url, stream=True, timeout=600)
                     response.raise_for_status()
                     with open(chi_sim_path, 'wb') as f:
@@ -87,17 +79,33 @@ class pdf2ocr():
                             f.write(chunk)
                     print(f"中文训练数据下载成功: {chi_sim_path}")
                 except Exception as e:
-                    raise RuntimeError(f"无法下载中文训练数据: {e}")
+                    print(f"下载失败: {e}，尝试使用系统默认中文数据...")
+                    # 如果下载失败，尝试找到系统安装的中文数据并复制
+                    system_chi_sim = "/usr/share/tesseract-ocr/4.00/tessdata/chi_sim.traineddata"
+                    if os.path.exists(system_chi_sim):
+                        print(f"找到系统中文数据，复制到用户目录...")
+                        shutil.copy2(system_chi_sim, chi_sim_path)
+                        print(f"复制成功: {chi_sim_path}")
+                    else:
+                        raise RuntimeError("无法找到或下载中文训练数据")
+            except Exception as e:
+                print(f"警告: {e}")
+                print("继续尝试使用系统默认语言包...")
                 
-        # 确保环境变量设置正确
-        os.environ['TESSDATA_PREFIX'] = tessdata_dir
-        print(f"已设置TESSDATA_PREFIX={tessdata_dir}")
-        
-        # 验证训练数据是否可访问
-        if os.path.exists(chi_sim_path):
-            print(f"中文训练数据文件存在: {chi_sim_path}")
-        else:
-            raise RuntimeError("无法找到中文训练数据文件，请手动安装tesseract-ocr-chi-sim")
+        # 检测语言包是否可用
+        try:
+            print("测试OCR引擎...")
+            test_image = Image.new('RGB', (100, 30), color = (255, 255, 255))
+            pytesseract.image_to_string(test_image, lang='chi_sim')
+            print("OCR引擎测试成功")
+        except Exception as e:
+            print(f"OCR引擎测试失败: {e}")
+            print("尝试不指定语言包...")
+            try:
+                pytesseract.image_to_string(test_image)
+                print("默认OCR引擎可用")
+            except:
+                print("OCR引擎完全不可用，请检查Tesseract安装")
 
     @staticmethod
     def pdf_to_images(pdf_path):
@@ -340,6 +348,7 @@ class pdf2ocr():
                 # 检查是否包含常见错误信息关键词
                 error_keywords = ["error", "exception", "invalid", "failed", "unauthorized", "权限不足", "错误", "失败"]
                 if any(keyword in polished_text.lower() for keyword in error_keywords):
+                    
                     print(f"API可能返回了错误信息: {polished_text}")
                     # 但仍然返回结果，因为可能只是巧合包含了这些词
                 
