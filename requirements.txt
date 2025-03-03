@@ -1,5 +1,5 @@
-pillow
-pytesseract
-pymupdf
-gradio
-python-dotenv
+pillow==9.5.0
+pytesseract==0.3.10
+pymupdf==1.22.3
+gradio==3.35.2
+python-dotenv==1.0.0
