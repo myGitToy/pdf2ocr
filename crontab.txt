@@ -1,0 +1,4 @@
+# PDF2OCR 定时任务配置
+# 每天00:30运行批处理任务
+
+30 0 * * * cd /home/george/文档/repos/pdf2ocr && /usr/bin/python3 scheduled_batch_process.py >> /home/george/文档/repos/pdf2ocr/cron.log 2>&1
