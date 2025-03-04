@@ -17,7 +17,7 @@ import time
 # 指定 Tesseract 的路径
 pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract'
 class pdf2ocr():
-    def __init__(self, psm=6, block_height=10000, max_retries=3, timeout=600):
+    def __init__(self, psm=6, block_height=10000, max_retries=3, timeout=600, max_chunk_size=64000):
         """
         初始化 OCR 识别引擎
         
@@ -34,12 +34,14 @@ class pdf2ocr():
                 较大的值会较好的进行OCR识别，但可能会导致内存不足错误
             max_retries (int): API请求最大重试次数
             timeout (int): API请求超时时间(秒) 这里不能很小，如果仅设置60，等不到API返回的结果
+            max_chunk_size (int): API文本处理时的最大块大小，默认64000字符
         """
         self.pdf_path = None
         self.psm = psm
         self.block_height = block_height
         self.max_retries = max_retries
         self.timeout = timeout
+        self.max_chunk_size = max_chunk_size  # 添加最大块大小属性
         # 加载环境变量
         load_dotenv()
         self.api_key = os.getenv("DEEPSEEK_API_KEY")
@@ -262,14 +264,58 @@ class pdf2ocr():
             "Authorization": f"Bearer {self.api_key}"
         }
 
-        # 限制提示文本长度，避免请求过大
-        max_text_len = 50000   # 最大文本长度（字符数）
-        if len(text) > max_text_len:
-            print(f"文本过长 ({len(text)} 字符)，截断至 {max_text_len} 字符...")
-            text = text[:max_text_len] + "\n[文本已截断]"
+        # 检查文本长度
+        text_length = len(text)
+        print(f"原始文本长度: {text_length} 字符")
 
-        # 构建提示信息，让DeepSeek重构OCR文本
-        prompt = f"""你是一个OCR后处理专家，要求如下：
+        # 使用实例的max_chunk_size而不是硬编码的30000
+        if text_length > self.max_chunk_size:
+            print(f"文本过长，采用分块处理策略 (最大块大小: {self.max_chunk_size})")
+            chunks = []
+            # 按段落分割文本
+            paragraphs = text.split('\n\n')
+            current_chunk = ""
+            
+            for para in paragraphs:
+                # 如果添加当前段落会导致块超过限制，则先处理当前块
+                if len(current_chunk) + len(para) + 2 > self.max_chunk_size and current_chunk:
+                    chunks.append(current_chunk)
+                    current_chunk = para
+                else:
+                    if current_chunk:
+                        current_chunk += "\n\n" + para
+                    else:
+                        current_chunk = para
+                        
+            # 添加最后一个块
+            if current_chunk:
+                chunks.append(current_chunk)
+                
+            print(f"将文本分为 {len(chunks)} 个块进行处理")
+            
+            # 处理每个块
+            processed_chunks = []
+            for i, chunk in enumerate(chunks):
+                print(f"处理第 {i+1}/{len(chunks)} 个块...")
+                chunk_prompt = f"""你是一个OCR后处理专家，要求如下：
+1. 修复OCR识别的文本中的错误，使其更加通顺、正确；
+2. 如果文本有语法错误或者不通顺的情况，请尽可能在尊重原文的基础上进行修改；
+3. 如果段落语义混乱无法总结和归纳，可以直接删除；
+4. 最后不需要返回修改内容和原文的差异比较；
+5. 请注意：这是一个分块处理的文档，当前是第 {i+1}/{len(chunks)} 块，请确保处理后的文本可以与其他块无缝连接；
+6. 输出时直接给出修复后的文本即可，输出格式请使用markdown。
+
+以下是OCR文本块：
+{chunk}"""
+                
+                chunk_result = self._call_deepseek_api(api_url, headers, chunk_prompt)
+                processed_chunks.append(chunk_result)
+                
+            # 合并处理后的块
+            return "\n\n".join(processed_chunks)
+        else:
+            # 对于较短文本使用原有处理逻辑
+            prompt = f"""你是一个OCR后处理专家，要求如下：
 1. 修复OCR识别的文本中的错误，使其更加通顺、正确；
 2. 如果文本有语法错误或者不通顺的情况，请尽可能在尊重原文的基础上进行修改；
 3. 如果段落语义混乱无法总结和归纳，可以直接删除；
@@ -288,11 +334,25 @@ class pdf2ocr():
 
 以下是OCR文本：
 {text}"""
+            return self._call_deepseek_api(api_url, headers, prompt)
 
+    def _call_deepseek_api(self, api_url, headers, prompt):
+        """
+        调用DeepSeek API的辅助方法
+        
+        参数:
+            api_url: API端点
+            headers: 请求头
+            prompt: 提示文本
+            
+        返回:
+            API返回的处理后文本
+        """
         data = {
             "model": "deepseek-chat",
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.5
+            "temperature": 0.5,
+            "max_tokens": 4000  # 明确指定最大输出token
         }
         
         print(f"请求数据大小: {len(json.dumps(data))} 字节")
@@ -321,21 +381,20 @@ class pdf2ocr():
                 response.raise_for_status()
                 print("收到成功响应，解析数据...")
                 
-                # 打印完整的响应内容以便调试
+                # 解析响应
                 response_data = response.json()
-                print(f"API响应内容: {json.dumps(response_data, ensure_ascii=False, indent=2)}")
                 
                 # 验证响应格式是否正确
                 if 'choices' not in response_data or not response_data['choices']:
                     error_msg = "API返回格式不正确：找不到'choices'字段"
                     print(error_msg)
-                    return text + f"\n[Error: {error_msg}]"
+                    return prompt + f"\n[Error: {error_msg}]"
                     
                 choice = response_data['choices'][0]
                 if 'message' not in choice or 'content' not in choice.get('message', {}):
                     error_msg = "API返回格式不正确：找不到'message.content'字段"
                     print(error_msg)
-                    return text + f"\n[Error: {error_msg}]"
+                    return prompt + f"\n[Error: {error_msg}]"
                 
                 polished_text = choice['message']['content']
                 
@@ -343,14 +402,7 @@ class pdf2ocr():
                 if not polished_text or len(polished_text) < 10:
                     error_msg = f"API返回文本过短或为空: '{polished_text}'"
                     print(error_msg)
-                    return text + f"\n[Error: {error_msg}]"
-                
-                # 检查是否包含常见错误信息关键词
-                error_keywords = ["error", "exception", "invalid", "failed", "unauthorized", "权限不足", "错误", "失败"]
-                if any(keyword in polished_text.lower() for keyword in error_keywords):
-                    
-                    print(f"API可能返回了错误信息: {polished_text}")
-                    # 但仍然返回结果，因为可能只是巧合包含了这些词
+                    return prompt + f"\n[Error: {error_msg}]"
                 
                 print("DeepSeek API调用成功")
                 return polished_text
@@ -361,7 +413,7 @@ class pdf2ocr():
                     # 如果不是最后一次尝试，则等待后重试
                     time.sleep(2)  # 等待2秒后重试
                 else:
-                    return text + "\n[Error: DeepSeek API request timed out after multiple attempts]"
+                    return prompt + "\n[Error: DeepSeek API request timed out after multiple attempts]"
             except requests.exceptions.ConnectionError as e:
                 print(f"DeepSeek API连接错误: {e} (尝试 {attempt+1}/{self.max_retries})")
                 # 打印更多网络诊断信息
@@ -372,16 +424,18 @@ class pdf2ocr():
                     print(f"等待 {retry_wait} 秒后重试...")
                     time.sleep(retry_wait)
                 else:
-                    return text + f"\n[Error: Connection to DeepSeek API failed after {self.max_retries} attempts: {e}]"
+                    return prompt + f"\n[Error: Connection to DeepSeek API failed after {self.max_retries} attempts: {e}]"
             except requests.exceptions.RequestException as e:
                 print(f"DeepSeek API请求错误: {e}")
-                return text + f"\n[Error calling DeepSeek API: {e}]"
+                return prompt + f"\n[Error calling DeepSeek API: {e}]"
             except (KeyError, IndexError) as e:
                 print(f"解析DeepSeek API响应错误: {e}")
-                return text + f"\n[Error parsing DeepSeek API response: {e}]"
+                return prompt + f"\n[Error parsing DeepSeek API response: {e}]"
             except Exception as e:
                 print(f"与DeepSeek API通信时发生未知错误: {e}")
-                return text + f"\n[Unknown error with DeepSeek API: {e}]"
+                return prompt + f"\n[Unknown error with DeepSeek API: {e}]"
+
+        return prompt + "\n[Error: API调用失败]"
 
     def deepseek_text_filter_stream(self, text):
         """

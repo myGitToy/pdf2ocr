@@ -42,25 +42,11 @@ def polish_text(ocr_text):
             return "请先进行OCR识别获取文本"
             
         print("开始调用DeepSeek API进行文本优化...")
-        # 创建实例时设置max_retries和timeout
-        ocr_engine = pdf2ocr(max_retries=3, timeout=600)  
+        # 创建实例时设置max_retries, timeout和max_chunk_size
+        ocr_engine = pdf2ocr(max_retries=3, timeout=600, max_chunk_size=64000)  
         polished_text = ocr_engine.deepseek_text_filter(ocr_text)
         return polished_text
-        """
-        # 错误处理块，暂时先不处理
-        # 检查结果是否包含错误标记
-        if "[Error:" in polished_text:
-            print("DeepSeek API调用出错，返回错误信息")
-            return f"DeepSeek处理错误: {polished_text}\n\n原始OCR文本:\n{ocr_text[:1000]}..."
-        elif len(polished_text) < len(ocr_text) * 0.5:
-            # 如果处理后文本长度显著短于原文本，可能有问题
-            print(f"警告: 处理后文本长度({len(polished_text)})显著短于原文本({len(ocr_text)})")
-            return f"警告: 处理结果可能不完整。如需查看原始文本，请滚动到页面底部。\n\n{polished_text}\n\n--- 原始OCR文本 ---\n{ocr_text}"
-        else:
-            print("DeepSeek文本处理成功")
-            return polished_text        
-        """
-
+        
     except Exception as e:
         error_msg = f"DeepSeek处理错误: {str(e)}\n{traceback.format_exc()}"
         print(error_msg)
@@ -94,8 +80,8 @@ def start_polish_text(ocr_text):
         
     print("提交DeepSeek处理任务...")
     
-    # 创建OCR引擎
-    ocr_engine = pdf2ocr(max_retries=3, timeout=600)
+    # 创建OCR引擎，指定更大的max_chunk_size
+    ocr_engine = pdf2ocr(max_retries=3, timeout=600, max_chunk_size=64000)
     
     # 提交异步任务
     task_id = task_manager.submit_task(
